@@ -21,7 +21,7 @@
 Your G14 OLED panel **is** HDR-capable. KWin thinks it isn't because `libdisplay-info` can't parse the panel's non-standard EDID. This script installs a one-line EDID firmware override that fixes detection — no kernel patches, no recompiling.
 
 ```bash
-git clone https://github.com/YOUR_USER/g14-hdr-fix.git
+git clone https://github.com/cashcon57/g14-hdr-fix.git
 cd g14-hdr-fix
 sudo ./install.sh && sudo reboot
 ```
@@ -101,7 +101,7 @@ The hardware is untouched — we only change what the DRM layer *reports* to use
 ## Install
 
 ```bash
-git clone https://github.com/YOUR_USER/g14-hdr-fix.git
+git clone https://github.com/cashcon57/g14-hdr-fix.git
 cd g14-hdr-fix
 sudo ./install.sh
 sudo reboot
