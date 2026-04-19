@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+# g14-hdr-fix — enable HDR detection on ASUS ROG Zephyrus G14 (2024+) under Linux
+#
+# The 2024+ G14 (Samsung ATNA40CU05-0 OLED) stores its HDR metadata inside a
+# DisplayID v2.0 EDID extension. libdisplay-info 0.3.x — used by KWin, Mutter,
+# wlroots, etc. — doesn't parse DisplayID data blocks, so compositors see the
+# display as HDR-incapable. This script installs an EDID firmware override
+# that appends a standard CTA-861 extension containing the same HDR static
+# metadata (and the 120 Hz DTD), which every compositor reads correctly.
+#
+# Safe to run multiple times. See uninstall.sh to revert.
+
+set -euo pipefail
+
+FIRMWARE_DIR="/lib/firmware/edid"
+FIRMWARE_FILE="g14_hdr_edid.bin"
+FIRMWARE_PATH="${FIRMWARE_DIR}/${FIRMWARE_FILE}"
+KERNEL_PARAM="drm.edid_firmware=eDP-1:edid/${FIRMWARE_FILE}"
+MKINITCPIO_CONF="/etc/mkinitcpio.conf"
+LIMINE_DEFAULT="/etc/default/limine"
+
+c_red=$'\e[31m'; c_green=$'\e[32m'; c_yellow=$'\e[33m'; c_blue=$'\e[34m'; c_reset=$'\e[0m'
+log()  { printf '%s[*]%s %s\n' "$c_blue" "$c_reset" "$*"; }
+ok()   { printf '%s[+]%s %s\n' "$c_green" "$c_reset" "$*"; }
+warn() { printf '%s[!]%s %s\n' "$c_yellow" "$c_reset" "$*"; }
+err()  { printf '%s[x]%s %s\n' "$c_red" "$c_reset" "$*" >&2; }
+die()  { err "$*"; exit 1; }
+
+require_root() {
+    [[ $EUID -eq 0 ]] || die "Run as root (e.g. sudo $0)"
+}
+
+detect_connector() {
+    # Find the connected eDP connector on the dGPU (the panel)
+    for c in /sys/class/drm/card*-eDP-*; do
+        [[ -e "$c/status" ]] || continue
+        if [[ "$(cat "$c/status")" == "connected" ]]; then
+            basename "$c" | sed 's/^card[0-9]*-//'
+            return 0
+        fi
+    done
+    return 1
+}
+
+verify_display() {
+    local edid="$1"
+    # Samsung SDC manufacturer code + ATNA40CU05 product name
+    if ! edid-decode < "$edid" 2>/dev/null | grep -q "ATNA40CU05"; then
+        warn "This doesn't look like the Samsung ATNA40CU05-0 panel."
+        warn "This script targets the 2024+ ASUS ROG Zephyrus G14 OLED."
+        read -r -p "Continue anyway? [y/N] " ans
+        [[ "${ans,,}" == "y" ]] || die "Aborted."
+    fi
+    if ! edid-decode < "$edid" 2>/dev/null | grep -q "SMPTE ST2084"; then
+        die "EDID has no SMPTE ST2084 support — display isn't HDR capable."
+    fi
+}
+
+build_edid() {
+    local input_edid="$1"
+    local output_path="$2"
+
+    python3 - "$input_edid" "$output_path" <<'PYEOF'
+import sys, os
+
+input_path, output_path = sys.argv[1], sys.argv[2]
+raw = open(input_path, 'rb').read()
+if len(raw) < 128:
+    sys.exit("EDID too short")
+
+# Keep original base block; force extension count to 1 (single CTA ext)
+base = bytearray(raw[0:128])
+base[0x7E] = 0x01
+base[0x7F] = 0
+base[0x7F] = (256 - (sum(base) % 256)) % 256
+assert sum(base) % 256 == 0
+
+# Parse HDR metadata from edid-decode output of the original EDID
+import subprocess
+decoded = subprocess.check_output(['edid-decode'], input=raw, stderr=subprocess.DEVNULL).decode()
+
+def find_lum(label):
+    for line in decoded.splitlines():
+        if label in line and 'cd/m^2' in line:
+            # e.g. "Desired content max luminance: 116 (616.884 cd/m^2)"
+            parts = line.split(':')[1].strip()
+            raw_byte = int(parts.split()[0])
+            return raw_byte
+    return None
+
+max_lum = find_lum("Desired content max luminance") or 116
+max_avg = find_lum("Desired content max frame-average luminance") or 96
+min_lum = find_lum("Desired content min luminance") or 2
+
+# CTA-861 data blocks
+# Colorimetry (ext tag 0x05): BT2020RGB (bit 7 of byte 1)
+colorimetry = bytes([0xe3, 0x05, 0x80, 0x00])
+# HDR Static Metadata (ext tag 0x06): SDR + SMPTE ST2084 EOTF, SM type 1
+hdr_metadata = bytes([0xe6, 0x06, 0x05, 0x01, max_lum & 0xff, max_avg & 0xff, min_lum & 0xff])
+data_blocks = colorimetry + hdr_metadata
+
+# DTD for the panel's high-refresh mode. Values measured from the original
+# DisplayID block on the Samsung ATNA40CU05-0 (2880x1800 @ 120 Hz).
+dtd_120hz = bytes([
+    0x8A, 0xFE,  # pixel clock 652260 kHz (/10 = 65226)
+    0x40, 0x64, 0xB0,  # H: active 2880, blank 100
+    0x08, 0x18, 0x70,  # V: active 1800, blank 24
+    0x20, 0x08, 0x88, 0x00,  # H/V sync offsets and widths
+    0x2E, 0xBD, 0x10,  # 302 mm x 189 mm
+    0x00, 0x00, 0x18,  # no borders, digital separate sync N/N
+])
+
+dtd_offset = 4 + len(data_blocks)
+cta = bytearray(128)
+cta[0] = 0x02
+cta[1] = 0x03
+cta[2] = dtd_offset
+cta[3] = 0x00
+cta[4:4+len(data_blocks)] = data_blocks
+cta[dtd_offset:dtd_offset+18] = dtd_120hz
+cta[127] = (256 - (sum(cta[0:127]) % 256)) % 256
+assert sum(cta) % 256 == 0
+
+os.makedirs(os.path.dirname(output_path), exist_ok=True)
+with open(output_path, 'wb') as f:
+    f.write(bytes(base) + bytes(cta))
+print(f"HDR bytes: max={max_lum} avg={max_avg} min={min_lum}")
+PYEOF
+}
+
+update_mkinitcpio() {
+    local conf="$1" entry="$2"
+    [[ -f "$conf" ]] || die "$conf not found"
+
+    # Back up once
+    [[ -f "${conf}.g14hdr.bak" ]] || cp "$conf" "${conf}.g14hdr.bak"
+
+    if grep -q "g14_hdr_edid.bin" "$conf"; then
+        log "mkinitcpio already has the firmware entry"
+        return 0
+    fi
+
+    # Append entry to FILES=( ... )
+    if grep -qE '^FILES=\(\s*\)' "$conf"; then
+        sed -i "s|^FILES=(\s*)|FILES=($entry)|" "$conf"
+    elif grep -qE '^FILES=\(' "$conf"; then
+        sed -i "s|^FILES=(|FILES=($entry |" "$conf"
+    else
+        printf '\nFILES=(%s)\n' "$entry" >> "$conf"
+    fi
+    ok "Added $entry to $conf FILES="
+}
+
+update_limine() {
+    local conf="$1"
+    [[ -f "$conf" ]] || die "$conf not found — is limine installed?"
+    [[ -f "${conf}.g14hdr.bak" ]] || cp "$conf" "${conf}.g14hdr.bak"
+
+    if grep -q "drm.edid_firmware=eDP-1:edid/${FIRMWARE_FILE}" "$conf"; then
+        log "limine already has the kernel parameter"
+        return 0
+    fi
+
+    printf '\n# Added by g14-hdr-fix\nKERNEL_CMDLINE[default]+="%s"\n' "$KERNEL_PARAM" >> "$conf"
+    ok "Added $KERNEL_PARAM to $conf"
+}
+
+main() {
+    require_root
+
+    command -v edid-decode >/dev/null || die "Need 'edid-decode' (pacman -S edid-decode)"
+    command -v python3 >/dev/null     || die "Need 'python3'"
+    command -v mkinitcpio >/dev/null  || die "Need 'mkinitcpio'"
+
+    log "Detecting connected internal panel..."
+    local connector
+    connector=$(detect_connector) || die "No connected eDP panel found."
+    ok "Found $connector"
+
+    local source_edid="/sys/class/drm/card*-${connector}/edid"
+    # Expand glob
+    source_edid=$(ls $source_edid 2>/dev/null | head -1) || true
+    [[ -n "$source_edid" && -f "$source_edid" ]] || die "Cannot read EDID for $connector"
+
+    log "Verifying display..."
+    verify_display "$source_edid"
+
+    log "Generating EDID firmware at ${FIRMWARE_PATH}"
+    build_edid "$source_edid" "$FIRMWARE_PATH"
+    chmod 0644 "$FIRMWARE_PATH"
+    ok "Wrote $(wc -c < "$FIRMWARE_PATH") bytes"
+
+    log "Updating mkinitcpio FILES..."
+    update_mkinitcpio "$MKINITCPIO_CONF" "$FIRMWARE_PATH"
+
+    log "Updating bootloader kernel cmdline..."
+    if [[ -f "$LIMINE_DEFAULT" ]]; then
+        update_limine "$LIMINE_DEFAULT"
+    else
+        warn "Limine config not found at $LIMINE_DEFAULT."
+        warn "Add this kernel parameter manually to your bootloader:"
+        warn "    $KERNEL_PARAM"
+    fi
+
+    log "Rebuilding initramfs..."
+    mkinitcpio -P >/dev/null 2>&1 || die "mkinitcpio failed — run 'mkinitcpio -P' manually"
+    ok "Initramfs rebuilt"
+
+    printf '\n'
+    ok "Install complete. Reboot to activate HDR detection."
+    printf '    After reboot, enable HDR in System Settings → Display & Monitor\n'
+    printf '    (or: kscreen-doctor output.%s.hdr.enable)\n' "$connector"
+}
+
+main "$@"
