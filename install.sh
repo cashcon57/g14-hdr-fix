@@ -15,9 +15,9 @@ set -euo pipefail
 FIRMWARE_DIR="/lib/firmware/edid"
 FIRMWARE_FILE="g14_hdr_edid.bin"
 FIRMWARE_PATH="${FIRMWARE_DIR}/${FIRMWARE_FILE}"
-KERNEL_PARAM="drm.edid_firmware=eDP-1:edid/${FIRMWARE_FILE}"
 MKINITCPIO_CONF="/etc/mkinitcpio.conf"
 LIMINE_DEFAULT="/etc/default/limine"
+KERNEL_PARAM=""  # set after connector detection
 
 c_red=$'\e[31m'; c_green=$'\e[32m'; c_yellow=$'\e[33m'; c_blue=$'\e[34m'; c_reset=$'\e[0m'
 log()  { printf '%s[*]%s %s\n' "$c_blue" "$c_reset" "$*"; }
@@ -176,6 +176,7 @@ main() {
     local connector
     connector=$(detect_connector) || die "No connected eDP panel found."
     ok "Found $connector"
+    KERNEL_PARAM="drm.edid_firmware=${connector}:edid/${FIRMWARE_FILE}"
 
     local source_edid="/sys/class/drm/card*-${connector}/edid"
     # Expand glob
