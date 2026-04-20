@@ -20,6 +20,8 @@
 
 Your G14 OLED panel **is** HDR-capable. KWin thinks it isn't because `libdisplay-info` can't parse the panel's non-standard EDID. This script installs a one-line EDID firmware override that fixes detection — no kernel patches, no recompiling.
 
+> **This is a stopgap.** The upstream `libdisplay-info` fix ([MR !202](https://gitlab.freedesktop.org/emersion/libdisplay-info/-/merge_requests/202)) has already been merged — it just hasn't been cut into a tagged release yet (latest is 0.3.0 from Aug 2025). Once `libdisplay-info` ≥ 0.4.0 ships and Arch/CachyOS picks it up, run `uninstall.sh` and use stock detection.
+
 ```bash
 git clone https://github.com/cashcon57/g14-hdr-fix.git
 cd g14-hdr-fix
