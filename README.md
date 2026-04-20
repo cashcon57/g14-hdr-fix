@@ -160,7 +160,7 @@ Both config files are backed up to `*.g14hdr.bak` before the first edit.
 
 - The 120 Hz DTD comes out to **119.88 Hz** — a 0.12 Hz rounding artefact of the CTA-861 DTD 10 kHz pixel-clock quantum. Every driver I've tested (NVIDIA 595, `amdgpu`, `i915`) accepts it as 120 Hz. If yours refuses, open an issue with `modetest -M <driver>` output.
 - The override hides the panel's DisplayID **Adaptive-Sync data block**. On NVIDIA, VRR still works because the driver advertises it via the `vrr_capable` DRM property (not EDID parsing). If you lose VRR on AMD/Intel, open an issue.
-- This is a **workaround**. The proper fix is for `libdisplay-info` to parse DisplayID Data Blocks; track upstream progress at [gitlab.freedesktop.org/emersion/libdisplay-info](https://gitlab.freedesktop.org/emersion/libdisplay-info). Once that lands and KWin picks it up, you can `uninstall.sh` this and use stock detection.
+- This is a **workaround**. The proper fix — `libdisplay-info` parsing CTA-861 Data Block Encapsulation inside DisplayID v2 — has **already landed upstream** in [MR !202](https://gitlab.freedesktop.org/emersion/libdisplay-info/-/merge_requests/202) (merged 2026-01-06). It's in `main` but hasn't been cut into a release yet; the latest tag (0.3.0, Aug 2025) predates the fix. Once upstream tags a new release and Arch/CachyOS pick it up, run `uninstall.sh` and use stock detection.
 
 ## Contributing
 
