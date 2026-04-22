@@ -32,6 +32,16 @@ After reboot, HDR will be toggleable in KDE System Settings (or via `kscreen-doc
 
 ---
 
+## Why this exists
+
+Fresh CachyOS install on a 2024 ROG Zephyrus G14 OLED. Everything Just Works™: NVIDIA open modules picked up, 2880×1800 native, KDE Plasma 6.6 boots straight to the login screen at 120 Hz. But pop open *System Settings → Display & Monitor* and the HDR toggle is greyed out with "This display doesn't support HDR." Run `kscreen-doctor -o` and it flatly reports `HDR: incapable`.
+
+Which is strange, because this panel absolutely is HDR-capable — Samsung's ATNA40CU05-0, ~617 nits peak, full DCI-P3, advertised by ASUS as an HDR True Black 500 display. The hardware spec sheet says yes. Every Linux tool in the stack says no.
+
+A few hours of tracing from KWin → `kscreen` → `libdisplay-info` → `di-edid-decode` surfaced the problem: ASUS stores the panel's HDR metadata inside a **DisplayID v2.0 extension block**, which is spec-compliant but an uncommon choice — most panels put HDR data in a CTA-861 extension instead. `libdisplay-info` (0.3.0 is current as of CachyOS in early 2026) doesn't yet parse DisplayID data blocks, so every compositor that uses it — KWin, Mutter, wlroots, Cosmic — sees the DisplayID extension, can't decode it, and concludes the panel is HDR-incapable.
+
+The proper fix has already [landed upstream](https://gitlab.freedesktop.org/emersion/libdisplay-info/-/merge_requests/202) but hasn't been tagged into a release yet. Rather than wait an unknown number of weeks for that release to wind its way through `libdisplay-info` → Arch `extra` → CachyOS, this script synthesizes a well-formed CTA-861 extension from the panel's own HDR bytes and installs it as an EDID firmware override. Every compositor already handles CTA-861 correctly, so HDR lights up on the next boot. `uninstall.sh` peels the whole thing off when upstream catches up.
+
 ## Why this is broken
 
 Samsung's ATNA40CU05-0 — the panel ASUS ships in the 2024+ G14 OLED — advertises its HDR capabilities inside a **DisplayID v2.0 extension block** instead of the conventional CTA-861 extension. That's spec-compliant, but `libdisplay-info` (the EDID parser used by **KWin**, **Mutter**, **wlroots**, **Cosmic**, and most other Wayland compositors) doesn't yet parse DisplayID data blocks.
