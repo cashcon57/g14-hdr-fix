@@ -17,6 +17,11 @@ FIRMWARE_FILE="g14_hdr_edid.bin"
 FIRMWARE_PATH="${FIRMWARE_DIR}/${FIRMWARE_FILE}"
 MKINITCPIO_CONF="/etc/mkinitcpio.conf"
 LIMINE_DEFAULT="/etc/default/limine"
+HOOK_DIR="/etc/pacman.d/hooks"
+HOOK_PATH="${HOOK_DIR}/g14-hdr-fix.hook"
+HELPER_DIR="/usr/local/share/g14-hdr-fix"
+HELPER_PATH="${HELPER_DIR}/post-transaction.sh"
+MIN_FIXED_VERSION="0.4.0"
 KERNEL_PARAM=""  # set after connector detection
 
 c_red=$'\e[31m'; c_green=$'\e[32m'; c_yellow=$'\e[33m'; c_blue=$'\e[34m'; c_reset=$'\e[0m'
@@ -151,6 +156,49 @@ update_mkinitcpio() {
     ok "Added $entry to $conf FILES="
 }
 
+install_pacman_hook() {
+    # Install a pacman ALPM hook that prints a notice when libdisplay-info is
+    # upgraded to a version containing MR !202 (DisplayID v2 CTA-861 decoding).
+    # Once that version ships, this workaround is no longer needed.
+    mkdir -p "$HELPER_DIR" "$HOOK_DIR"
+
+    cat > "$HELPER_PATH" <<HELPEREOF
+#!/usr/bin/env bash
+# Installed by g14-hdr-fix. Runs after libdisplay-info upgrades and prints a
+# notice if the installed version contains the upstream DisplayID v2 fix,
+# meaning this workaround can be removed.
+set -eu
+min_version="$MIN_FIXED_VERSION"
+current=\$(pacman -Q libdisplay-info 2>/dev/null | awk '{print \$2}')
+[[ -n "\$current" ]] || exit 0
+if (( \$(vercmp "\$current" "\$min_version") >= 0 )); then
+    printf '\n'
+    printf '==> g14-hdr-fix: libdisplay-info %s contains the upstream DisplayID v2 fix.\n' "\$current"
+    printf '    The EDID firmware override is no longer needed.\n'
+    printf '    To remove the workaround, run: sudo /path/to/g14-hdr-fix/uninstall.sh\n'
+    printf '    (or re-clone from https://github.com/cashcon57/g14-hdr-fix)\n\n'
+fi
+HELPEREOF
+    chmod 0755 "$HELPER_PATH"
+
+    cat > "$HOOK_PATH" <<HOOKEOF
+# Installed by g14-hdr-fix. Notifies when libdisplay-info gains the upstream
+# DisplayID v2 fix, so this workaround can be removed.
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = libdisplay-info
+
+[Action]
+Description = Checking if g14-hdr-fix workaround is still needed...
+When = PostTransaction
+Exec = $HELPER_PATH
+HOOKEOF
+    chmod 0644 "$HOOK_PATH"
+    ok "Installed pacman hook → $HOOK_PATH"
+}
+
 update_limine() {
     local conf="$1"
     [[ -f "$conf" ]] || die "$conf not found — is limine installed?"
@@ -190,6 +238,9 @@ main() {
     build_edid "$source_edid" "$FIRMWARE_PATH"
     chmod 0644 "$FIRMWARE_PATH"
     ok "Wrote $(wc -c < "$FIRMWARE_PATH") bytes"
+
+    log "Installing pacman notification hook..."
+    install_pacman_hook
 
     log "Updating mkinitcpio FILES..."
     update_mkinitcpio "$MKINITCPIO_CONF" "$FIRMWARE_PATH"

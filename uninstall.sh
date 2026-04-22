@@ -6,6 +6,8 @@ set -euo pipefail
 FIRMWARE_PATH="/lib/firmware/edid/g14_hdr_edid.bin"
 MKINITCPIO_CONF="/etc/mkinitcpio.conf"
 LIMINE_DEFAULT="/etc/default/limine"
+HOOK_PATH="/etc/pacman.d/hooks/g14-hdr-fix.hook"
+HELPER_DIR="/usr/local/share/g14-hdr-fix"
 
 c_green=$'\e[32m'; c_yellow=$'\e[33m'; c_red=$'\e[31m'; c_reset=$'\e[0m'
 ok()   { printf '%s[+]%s %s\n' "$c_green" "$c_reset" "$*"; }
@@ -17,6 +19,16 @@ die()  { printf '%s[x]%s %s\n' "$c_red" "$c_reset" "$*" >&2; exit 1; }
 if [[ -f "$FIRMWARE_PATH" ]]; then
     rm -f "$FIRMWARE_PATH"
     ok "Removed $FIRMWARE_PATH"
+fi
+
+if [[ -f "$HOOK_PATH" ]]; then
+    rm -f "$HOOK_PATH"
+    ok "Removed $HOOK_PATH"
+fi
+
+if [[ -d "$HELPER_DIR" ]]; then
+    rm -rf "$HELPER_DIR"
+    ok "Removed $HELPER_DIR"
 fi
 
 if [[ -f "${MKINITCPIO_CONF}.g14hdr.bak" ]]; then
