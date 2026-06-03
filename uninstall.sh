@@ -4,7 +4,10 @@
 set -euo pipefail
 
 FIRMWARE_PATH="/lib/firmware/edid/g14_hdr_edid.bin"
+
 MKINITCPIO_CONF="/etc/mkinitcpio.conf"
+DRACUT_CONF="/etc/dracut.conf.d"
+
 LIMINE_DEFAULT="/etc/default/limine"
 HOOK_PATH="/etc/pacman.d/hooks/g14-hdr-fix.hook"
 HELPER_DIR="/usr/local/share/g14-hdr-fix"
@@ -39,6 +42,11 @@ elif grep -q "g14_hdr_edid.bin" "$MKINITCPIO_CONF" 2>/dev/null; then
     ok "Cleaned $MKINITCPIO_CONF"
 fi
 
+DCONF_FILE="${DRACUT_CONF}/g14-hdr.conf"
+if [[ -f "${DCONF_FILE}" ]]; then
+    rm $DCONF_FILE
+fi
+
 if [[ -f "${LIMINE_DEFAULT}.g14hdr.bak" ]]; then
     mv "${LIMINE_DEFAULT}.g14hdr.bak" "$LIMINE_DEFAULT"
     ok "Restored $LIMINE_DEFAULT"
@@ -49,6 +57,11 @@ fi
 
 if command -v mkinitcpio >/dev/null; then
     mkinitcpio -P >/dev/null 2>&1 || warn "mkinitcpio failed — run it manually"
+    ok "Rebuilt initramfs"
+fi
+
+if command -v dracut >/dev/null; then
+    dracut-rebuild >/dev/null 2>&1 || warn "dracut failed -- run it manually"
     ok "Rebuilt initramfs"
 fi
 

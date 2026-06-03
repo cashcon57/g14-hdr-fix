@@ -133,7 +133,7 @@ sudo ./uninstall.sh
 sudo reboot
 ```
 
-Backups of `/etc/mkinitcpio.conf` and `/etc/default/limine` are created on first install (`*.g14hdr.bak`) and restored on uninstall.
+When using `mkinitcpio`, backups of `/etc/mkinitcpio.conf` and `/etc/default/limine` are created on first install (`*.g14hdr.bak`) and restored on uninstall.  When using `dracut`, a `g14-hdr.conf` is added to `/etc/dracut.conf.d/`, and removed upon uninstall -- the `/etc/dracut.conf` is untouched.  
 
 ## Dependencies
 
@@ -142,24 +142,24 @@ Backups of `/etc/mkinitcpio.conf` and `/etc/default/limine` are created on first
 | `bash` ≥ 5 | installer / uninstaller | ✅ |
 | `python3` | EDID blob generation | ✅ |
 | `edid-decode` | reads HDR byte values from the real EDID | ✅ |
-| `mkinitcpio` | bakes the firmware into initramfs | ✅ |
+| `mkinitcpio` (or `dracut`) | bakes the firmware into initramfs | ✅ |
 | `limine` *(or any bootloader)* | applies the kernel cmdline parameter | ✅ (CachyOS default) |
 
 If `edid-decode` is missing: `sudo pacman -S edid-decode`.
 
 ## Compatibility matrix
 
-The underlying technique (`drm.edid_firmware=` kernel override) is distro-agnostic — every Linux kernel supports it. **The installer, however, is Arch-family only**: it hard-depends on `mkinitcpio`, `pacman` (for the notification hook), and optionally `/etc/default/limine`. On Fedora / Ubuntu / openSUSE / NixOS it will exit cleanly at the `mkinitcpio` check.
+The underlying technique (`drm.edid_firmware=` kernel override) is distro-agnostic — every Linux kernel supports it. **The installer, however, is Arch-family only**: it hard-depends on `mkinitcpio`/`dracut`, `pacman` (for the notification hook), and optionally `/etc/default/limine`. On Fedora / Ubuntu / openSUSE / NixOS it will exit cleanly at the `mkinitcpio`/`dracut` check.
 
 | Component | Tested | Plausibly works (unverified) | Won't work without manual effort |
 | --- | --- | --- | --- |
 | **Hardware** | ASUS ROG Zephyrus G14 (2024, GA403) w/ Samsung ATNA40CU05-0 OLED | Any laptop with the same panel SKU | Other OLED panels with different HDR block layouts |
 | **GPU driver** | NVIDIA 595.58.03 (open kernel modules) | NVIDIA ≥ 550, AMD `amdgpu`, Intel `i915` | — |
-| **Distro** | CachyOS (kernel 7.0, pacman, mkinitcpio, Limine) | Arch Linux, EndeavourOS, Manjaro, Garuda — any `mkinitcpio` + `pacman` distro | Fedora, Ubuntu, openSUSE, NixOS — installer doesn't run, but the EDID firmware technique itself still applies if you port the steps |
+| **Distro** | CachyOS (kernel 7.0, pacman, mkinitcpio/dracut, Limine) | Arch Linux, EndeavourOS, Manjaro, Garuda — any `mkinitcpio`/`dracut` + `pacman` distro | Fedora, Ubuntu, openSUSE, NixOS — installer doesn't run, but the EDID firmware technique itself still applies if you port the steps |
 | **Bootloader** | Limine (auto-patched) | GRUB / systemd-boot — script prints the kernel param, you add it manually | — |
 | **Compositor** | KDE Plasma 6.6 (Wayland) | GNOME 46+ Mutter, Cosmic, Hyprland/Sway with HDR patches (all use `libdisplay-info`, so the detection fix should apply identically) | — |
 
-PRs to extend installer support (dracut, initramfs-tools, GRUB/systemd-boot auto-patching, non-`pacman` notification hooks) are welcome.
+PRs to extend installer support (initramfs-tools, GRUB/systemd-boot auto-patching, non-`pacman` notification hooks) are welcome.
 
 ## What the script touches
 
@@ -167,6 +167,7 @@ PRs to extend installer support (dracut, initramfs-tools, GRUB/systemd-boot auto
 | --- | --- |
 | `/lib/firmware/edid/g14_hdr_edid.bin` | ➕ created (256 bytes, synthesized EDID) |
 | `/etc/mkinitcpio.conf` | `FILES=` gains the firmware path |
+| `/etc/dracut.conf.d/g14-hdr.conf` | Single line adding firmware |
 | `/etc/default/limine` | `KERNEL_CMDLINE[default]+=` gains `drm.edid_firmware=…` |
 | `/boot/<machine-id>/linux-*/initramfs-*` | regenerated so the firmware is available in early boot |
 
