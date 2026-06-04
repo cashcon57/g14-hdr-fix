@@ -58,11 +58,14 @@ fi
 if command -v mkinitcpio >/dev/null; then
     mkinitcpio -P >/dev/null 2>&1 || warn "mkinitcpio failed — run it manually"
     ok "Rebuilt initramfs"
+elif command -v which dracut-rebuild >/dev/null; then
+    dracut-rebuild >/dev/null 2>&1 || warn "dracut-rebuild failed -- run it manually"
+    ok "Rebuilt initramfs"
+elif command -v which dracut >/dev/null; then
+    dracut --regenerate-all --force >/dev/null 2>&1 || warn "dracut failed - run 'dracut-rebuild' manually"
+    ok "Rebuilt intramfs"
 fi
 
-if command -v dracut >/dev/null; then
-    dracut-rebuild >/dev/null 2>&1 || warn "dracut failed -- run it manually"
-    ok "Rebuilt initramfs"
-fi
+
 
 ok "Uninstall complete. Reboot to revert."

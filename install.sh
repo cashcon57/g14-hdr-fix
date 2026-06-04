@@ -13,6 +13,7 @@
 set -euo pipefail
 
 CONST_MKINITCPIO="mkinitcpio"
+CONST_DRACUT_R="dracut-rebuild"
 CONST_DRACUT="dracut"
 
 FIRMWARE_DIR="/lib/firmware/edid"
@@ -163,16 +164,16 @@ update_mkinitcpio() {
     ok "Added $entry to $conf FILES="
 }
 
-update_dracut() {
+update_dracut_conf() {
     local conf_dir="$1" entry="$2"
     [[ -d "$conf_dir" ]] || die "$conf_dir not found"
 
     # Check if configuration already exists
-    CONF_FILE="${conf_dir}/g14-hdr.conf"
+    local conf_file="${conf_dir}/g14-hdr.conf"
 
-    echo "install_items+=$entry" > $CONF_FILE
+    echo "install_items+=\" $entry \"" > $conf_file
 
-    ok "Added bin to $CONF_FILE"
+    ok "Added bin to $conf_file"
 }
 
 install_pacman_hook() {
@@ -238,10 +239,16 @@ main() {
     command -v edid-decode >/dev/null || die "Need 'edid-decode' (pacman -S edid-decode)"
     command -v python3 >/dev/null     || die "Need 'python3'"
     
-    local boot_configurator
-    boot_configurator=$CONST_MKINITCPIO
-    command -v mkinitcpio >/dev/null  || boot_configurator=$CONST_DRACUT
-    command -v dracut >/dev/null || die "Need 'mkinitcpio' or 'dracut'"
+    local boot_configurator=""
+    if command -v mkinitcpio >/dev/null; then
+        boot_configurator=$CONST_MKINITCPIO
+    elif command -v which dracut-rebuild >/dev/null; then
+        boot_configurator=$CONST_DRACUT_R
+    elif command -v which dracut >/dev/null; then
+        boot_configurator=$CONST_DRACUT
+    else
+        die "Need 'mkinitcpio' or 'dracut'"
+    fi
 
     log "Detecting connected internal panel..."
     local connector
@@ -267,11 +274,9 @@ main() {
 
     log "Updating ${boot_configurator} FILES..."
     if [[ "$boot_configurator" = "$CONST_MKINITCPIO" ]]; then
-        echo $boot_configurator
         update_mkinitcpio "$MKINITCPIO_CONF" "$FIRMWARE_PATH"
-    elif [[ "$boot_configurator" = "$CONST_DRACUT" ]]; then
-        echo $boot_configurator
-        update_dracut "$DRACUT_CONF_F" "$FIRMWARE_PATH"
+    elif [[ "$boot_configurator" = "$CONST_DRACUT" || "$boot_configurator" = "$CONST_DRACUT_R" ]]; then
+        update_dracut_conf "$DRACUT_CONF_F" "$FIRMWARE_PATH"
     else
         die "Boot configurator (dracut or mkinicpio) not found"
     fi
@@ -289,8 +294,10 @@ main() {
     log "Rebuilding initramfs..."
     if [[ "$boot_configurator" = "$CONST_MKINITCPIO" ]]; then
         mkinitcpio -P >/dev/null 2>&1 || die "mkinitcpio failed — run 'mkinitcpio -P' manually"
-    elif [[ "$boot_configurator" = "$CONST_DRACUT" ]]; then
+    elif [[ "$boot_configurator" = "$CONST_DRACUT_R" ]]; then
         dracut-rebuild >/dev/null 2>&1 || die "dracut failed - run 'dracut-rebuild' manually"
+    elif [[ "$boot_configurator" = "$CONST_DRACUT" ]]; then
+        dracut --regenerate-all --force >/dev/null 2>&1 || die "dracut failed - run 'dracut --regenerate-all -f' manually"
     else
         die "Initramfs not generated, as boot configurator (dracut or mkinicpio) not found"
     fi
