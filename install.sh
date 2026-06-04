@@ -12,11 +12,19 @@
 
 set -euo pipefail
 
+CONST_MKINITCPIO="mkinitcpio"
+CONST_DRACUT_R="dracut-rebuild"
+CONST_DRACUT="dracut"
+
 FIRMWARE_DIR="/lib/firmware/edid"
 FIRMWARE_FILE="g14_hdr_edid.bin"
 FIRMWARE_PATH="${FIRMWARE_DIR}/${FIRMWARE_FILE}"
+
 MKINITCPIO_CONF="/etc/mkinitcpio.conf"
+DRACUT_CONF_F="/etc/dracut.conf.d"
+
 LIMINE_DEFAULT="/etc/default/limine"
+
 HOOK_DIR="/etc/pacman.d/hooks"
 HOOK_PATH="${HOOK_DIR}/g14-hdr-fix.hook"
 HELPER_DIR="/usr/local/share/g14-hdr-fix"
@@ -140,7 +148,7 @@ update_mkinitcpio() {
     # Back up once
     [[ -f "${conf}.g14hdr.bak" ]] || cp "$conf" "${conf}.g14hdr.bak"
 
-    if grep -q "g14_hdr_edid.bin" "$conf"; then
+    if grep -q "$FIRMWARE_FILE" "$conf"; then
         log "mkinitcpio already has the firmware entry"
         return 0
     fi
@@ -154,6 +162,18 @@ update_mkinitcpio() {
         printf '\nFILES=(%s)\n' "$entry" >> "$conf"
     fi
     ok "Added $entry to $conf FILES="
+}
+
+update_dracut_conf() {
+    local conf_dir="$1" entry="$2"
+    [[ -d "$conf_dir" ]] || die "$conf_dir not found"
+
+    # Check if configuration already exists
+    local conf_file="${conf_dir}/g14-hdr.conf"
+
+    echo "install_items+=\" $entry \"" > $conf_file
+
+    ok "Added bin to $conf_file"
 }
 
 install_pacman_hook() {
@@ -218,7 +238,17 @@ main() {
 
     command -v edid-decode >/dev/null || die "Need 'edid-decode' (pacman -S edid-decode)"
     command -v python3 >/dev/null     || die "Need 'python3'"
-    command -v mkinitcpio >/dev/null  || die "Need 'mkinitcpio'"
+    
+    local boot_configurator=""
+    if command -v mkinitcpio >/dev/null; then
+        boot_configurator=$CONST_MKINITCPIO
+    elif command -v which dracut-rebuild >/dev/null; then
+        boot_configurator=$CONST_DRACUT_R
+    elif command -v which dracut >/dev/null; then
+        boot_configurator=$CONST_DRACUT
+    else
+        die "Need 'mkinitcpio' or 'dracut'"
+    fi
 
     log "Detecting connected internal panel..."
     local connector
@@ -242,9 +272,16 @@ main() {
     log "Installing pacman notification hook..."
     install_pacman_hook
 
-    log "Updating mkinitcpio FILES..."
-    update_mkinitcpio "$MKINITCPIO_CONF" "$FIRMWARE_PATH"
+    log "Updating ${boot_configurator} FILES..."
+    if [[ "$boot_configurator" = "$CONST_MKINITCPIO" ]]; then
+        update_mkinitcpio "$MKINITCPIO_CONF" "$FIRMWARE_PATH"
+    elif [[ "$boot_configurator" = "$CONST_DRACUT" || "$boot_configurator" = "$CONST_DRACUT_R" ]]; then
+        update_dracut_conf "$DRACUT_CONF_F" "$FIRMWARE_PATH"
+    else
+        die "Boot configurator (dracut or mkinicpio) not found"
+    fi
 
+    # FUTURE TODO: Add grub support
     log "Updating bootloader kernel cmdline..."
     if [[ -f "$LIMINE_DEFAULT" ]]; then
         update_limine "$LIMINE_DEFAULT"
@@ -255,7 +292,16 @@ main() {
     fi
 
     log "Rebuilding initramfs..."
-    mkinitcpio -P >/dev/null 2>&1 || die "mkinitcpio failed — run 'mkinitcpio -P' manually"
+    if [[ "$boot_configurator" = "$CONST_MKINITCPIO" ]]; then
+        mkinitcpio -P >/dev/null 2>&1 || die "mkinitcpio failed — run 'mkinitcpio -P' manually"
+    elif [[ "$boot_configurator" = "$CONST_DRACUT_R" ]]; then
+        dracut-rebuild >/dev/null 2>&1 || die "dracut failed - run 'dracut-rebuild' manually"
+    elif [[ "$boot_configurator" = "$CONST_DRACUT" ]]; then
+        dracut --regenerate-all --force >/dev/null 2>&1 || die "dracut failed - run 'dracut --regenerate-all -f' manually"
+    else
+        die "Initramfs not generated, as boot configurator (dracut or mkinicpio) not found"
+    fi
+
     ok "Initramfs rebuilt"
 
     printf '\n'
